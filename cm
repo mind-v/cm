@@ -1,0 +1,448 @@
+#!/bin/sh
+
+PREF="/home/jailuser/www"
+
+UID=`cat /etc/passwd | awk -F ':' '$1~/^jailuser$/ { print $3 }'`
+GID=`cat /etc/passwd | awk -F ':' '$1~/^jailuser$/ { print $4 }'`
+UNAME=`hostname | sed 's/\.local//;s/_/\./g'`
+UNAMECH=`hostname | sed 's/\.local//;s/_/-/g'`
+SVN=`which svn`
+#LPREF=`dirname $0`
+LPREF='/sbin'
+
+ATPL="$(echo "$LPREF/apache.tpl")"
+APCONFPREF="/usr/local/etc/apache22/Includes"
+
+SVNURL="svn://172.16.1.101/secure"
+
+echo
+
+# Get/new Branch
+getbranch() {
+    if [ -n "$SVN" ]; then
+        if [ -n "$3" ]; then
+
+            if [ -n "$( echo "$3" | sed 's/[a-zA-Z0-9-]//g' )" ]; then
+                echo "The URL prefix must contain only this characters: a-z A-Z, digits and \"-\""
+                echo
+                exit 8
+            else
+
+                DPREF="$3"
+
+                if [ -n "$4" ]; then
+                    PASS="$4"
+                else
+                    OLDSTTY=$(stty -g)
+                    echo -n "Input your LDAP password: "
+                    stty -echo
+                    read PASS
+                    stty $OLDSTTY
+                    echo
+                fi
+
+                case $1 in
+                    get)
+                        DNAME=`basename "$2"`
+                        SVNCOURL="$2"
+                    ;;
+                    new)
+                        DNAME="$2"
+                        echo "Trying to create new branch $SVNURL/branches/$DNAME"
+                        if $SVN cp "$SVNURL/trunk" "$SVNURL/branches/$DNAME" --username="$UNAME" --password="$PASS" --non-interactive -m "Create new branch $DNAME for $UNAME."; then
+                            SVNCOURL="$SVNURL/branches/$2"
+                        else
+                            echo
+                            echo "Can't make new branch. Something wrong happened. :("
+                            echo
+                            exit 9
+                        fi
+                    ;;
+                    *)
+                        echo "Wrong parameter $1"
+                        echo 
+                        exit 7
+                    ;;
+                esac
+            
+                echo "Trying to check out SVN data..."
+                if $SVN co "$SVNCOURL" --username="$UNAME" --password="$PASS" --non-interactive; then
+                    if [ -d "$PREF/$DNAME" ]; then
+                        #echo "Please, wait for changing grants"
+                        #chown -R "$UID:$GID" "$PREF/$DNAME"
+                        [ -n "$( echo "$5" | egrep '^noweb$' )" ] || addvh
+                    else
+                        echo "Can't find working directory $PREF/$DNAME"
+                        echo
+                        exit 5
+                    fi
+                else
+                    echo 
+                    echo "Can't make checkout. Something wrong happened. :("
+                    echo
+                    exit 8
+                fi
+
+            fi
+
+        else
+            echo "Not enough parameters to get or new brunch function"
+            echo 
+            exit 1
+        fi
+
+    else
+        echo "SVN client is not installed"
+        echo 
+        exit 4
+    fi
+
+}
+
+# Add/remove DNS record
+domman() {
+    IP=`ifconfig alc0 | awk '$1~/^inet$/ { print $2 }'` 
+    ssh 192.168.3.254 -p 34444 sudo /opt/bin/domman $1 $2 "$IP"
+}
+
+# Add virtual host
+addvh() {
+
+    APCONFPREF="/usr/local/etc/apache22/Includes"
+
+    [ -n "$1" ] && DNAME="$1"
+    [ -n "$2" ] && DPREF="$2"
+
+    if [ -d "$PREF/$DNAME" ]; then
+        #echo "Please, wait for changing grants"
+        #chown -R "$UID:$GID" "$PREF/$DNAME"
+        [ -d "$PREF/log" ] || mkdir -p "$PREF/log"
+
+        if [ -r "$ATPL" ]; then                        
+
+            ATPL="$(echo "$LPREF/apache.tpl")"
+
+            touch "$PREF/log/$DNAME_error.log"
+            #chown -R "$UID:$GID" "$PREF/log/$DNAME_error.log"
+            sed 's/###/'"$UNAME"'/g;s/\?\?\?/'"$DNAME"'/g;s/%%%/'"$DPREF"'/g;s/@@@/'"$UNAMECH"'/g' "$ATPL" > "$APCONFPREF/$DNAME.conf"
+            ar
+            domman add "$DPREF-$UNAMECH" "$IP"
+            echo "New domain is: $DPREF-$UNAMECH.user"
+
+        else
+            echo "Can't read apache template file $ATPL"
+            echo
+            exit 6
+        fi
+
+    else
+        echo "Can't find working directory $PREF/$DNAME"
+        echo
+        exit 5
+    fi
+
+}
+
+# Remove virtual host
+rmvh() {
+    if [ -n "$1" ]; then
+        LST=`grep -irn "ServerName" "$APCONFPREF" | awk '$3~/^'"$1"'$/ { print }'`
+        if [ -n "$LST" ]; then
+            echo "$LST" | while read l; do
+                CONFNAME=`echo "$l" | cut -d ":" -f 1`
+                echo "Removing config file $CONFNAME"
+                if rm -v "$CONFNAME"; then
+                else
+                    echo "Can't remove file $CONFNAME"
+                    exit 11
+                fi
+            done
+            if [ -n "$2" ]; then
+                echo "Removing DNS record for $1"
+                domman rm "$1"
+                ar
+            fi
+        fi
+    else
+        echo "Not enough parameters"
+        echo "Usage: $0 rmvh <hostname>"
+        echo "Example: $0 rmvh test-domain-v-azelin.user"
+        echo
+        exit 1
+    fi
+}
+
+# List of virtual hosts
+lvh() {
+    [ -n "$1" ] && grep -irn 'ServerName' "$APCONFPREF"/* | sed 's/:[0-9]*://g;s/ServerName//g' || grep -irn 'ServerName' "$APCONFPREF"/* | sed 's/:[0-9]*://g;s/ServerName//g' | awk '{ print $2 }'
+}
+
+# Apache restart
+ar() {
+    sudo /usr/local/etc/rc.d/apache22 restart
+}
+
+# Remove all
+rmall() {
+    if [ -n "$1" ]; then
+
+        # Removing of svn path
+        if [ -d "$PREF/$1" ]; then
+            cd "$PREF/$1"
+            if svn info > /dev/null; then
+                SVNURL=`svn info | awk '$1~/^URL:$/ { print $2 }'`
+                ch=""
+                while [ -z "$(echo "$ch" | egrep '^[yn]$' )" ]; do
+                    echo -n "WARNING!!! Do you really want to remove $SVNURL from svn repository? [y/n] "
+                    read ch
+                done
+                if [ "$ch" == "y" ]; then
+                    OLDSTTY=$(stty -g)
+                    echo -n "Input your LDAP password: "
+                    stty -echo
+                    read PASS
+                    stty $OLDSTTY
+                    echo
+                    echo "Trying to remove $SVNURL from svn repository..."
+                    if svn rm "$SVNURL" -m "Removing $SVNURL from repository" --username="$UNAME" --password="$PASS" --non-interactive; then
+                        echo > /dev/null
+                    else
+                        echo "Can't remove $SVNURL from repository"
+                        echo
+                        exit 13
+                    fi
+                fi
+            echo
+            cd "$PREF"
+            else
+                echo "Can't execute svn info in working copy $PREF/$1"
+                echo
+                exit 12 
+            fi 
+        else
+            echo "Can't find working directory $PREF/$1"
+            echo
+        fi
+
+        # Removing of apache configs
+        CFGLIST=`grep -irn "$PREF/$1/htdocs" "$APCONFPREF" | cut -d ":" -f 1 | sort -u`
+        if [ -n "$CFGLIST" ]; then
+            echo
+            echo "Found apache configuration files for path $1:"
+            echo "$CFGLIST"
+            echo
+            ch=""
+            DLIST=""
+            for cfg in $CFGLIST; do
+                DLIST="$(echo "$DLIST"'|'"$(awk '$1~/^ServerName$/ { print $2 }' "$cfg" | sed 's/\.user$//')")"
+                while [ -z "$(echo "$ch" | egrep '^[yn]$' )" ]; do
+                    echo -n "Do you want to remove config file $cfg? [y/n] "
+                    read ch
+                done
+                if [ "$ch" == "y" ]; then
+                    echo 
+                    rm -fv "$cfg"
+                    echo Restarting apache...
+                    ar
+                fi
+                ch=""
+                echo
+            done
+            DLIST=`echo "$DLIST" | sed 's/^|//'`
+        fi
+
+        # Removing of working directory
+        if [ -d "$PREF/$1" ]; then
+            ch=""
+            while [ -z "$(echo "$ch" | egrep '^[yn]$' )" ]; do
+                echo -n "Do you really want to remove $PREF/$1 working directory? [y/n] "
+                read ch
+            done
+            if [ "$ch" == "y" ]; then
+                echo
+                rm -rfv "$PREF/$1"
+                echo
+            fi
+        
+        fi
+
+        # Removing of DNS records
+        if [ -n "$DLIST" ]; then
+            echo 
+            IP=`ifconfig alc0 | awk '$1~/^inet$/ { print $2 }'` 
+            DLIST=`ssh 192.168.3.254 -p 34444 sudo /opt/bin/dlist "$UNAME" | awk '$1~/'"$DLIST"'/ && $2~/'"$IP"'/' | sort -u | tail -n 1`
+            if [ -n "$DLIST" ]; then
+                echo "Found DNS record: $DLIST"
+            fi
+            ch=""
+            while [ -z "$(echo "$ch" | egrep '^[yn]$' )" ]; do
+                echo -n "Do you want to remove it? [y/n] "
+                read ch
+            done
+            if [ "$ch" == "y" ]; then
+                echo
+                domman rm `echo "$DLIST" | awk '{ print $1 }'`
+                echo
+            else
+                echo
+            fi
+
+        fi
+
+    else
+        echo "Not enough parameters"
+        manual rmall
+        exit 1
+    fi
+}
+
+# Manual
+manual() {
+    LIST="gb nb ad rd ld rmvh lvh rmall"
+
+    if [ -n "$1" ]; then
+        case "$1" in
+            gb)
+                echo "Usage:"
+                echo "    To get existing branch: $0 gb <branch url> <web url prefix>"
+                echo "        Example: $0 gb svn://172.16.1.101/secure/branches/liveteam_v.azelin liveteam"
+                echo "        Result domain name: http://liveteam-v-azelin.user"
+                echo "        Configuration file for apache and DNS record will be created after svn checkout"
+                echo 
+            ;;
+            
+            nb)
+                echo "    To create new branch: $0 nb <branch name> <web url prefix>"
+                echo "        Example: $0 nb liveteam_v.azelin liveteam"
+                echo "        Result domain name: http://liveteam-v-azelin.user"
+                echo "        Configuration file for apache and DNS record will be created after svn copy and checkout"
+                echo 
+            ;;
+
+            ad)
+                echo "    To add domain record: $0 ad <domain name without .user>"
+                echo "        Example: $0 ad liveteam_v.azelin"
+                echo "        The domain name will be linked to IP address of this jail"
+                echo 
+            ;;
+
+            rd)
+                echo "    To remove domain record: $0 rd <domain name without .user>"
+                echo "        Example: $0 rd liveteam_v.azelin"
+                echo "        The domain name will be linked to IP address of this jail"
+                echo 
+            ;;
+
+            ld)
+                echo "    To getting list of domain name of this user: $0 ld"
+                echo "        Example: $0 ld"
+                echo "        You will get list of domains that ends with \"-v-azelin.user\" if your username is v.azelin"
+                echo 
+            ;;
+
+            lvh)
+                echo "    To getting list of your virtual hosts: $0 lvh"
+                echo "        Example: $0 lvh"
+                echo "        You will get list of your virtual hosts"
+                echo 
+
+            ;;
+
+            rmvh)
+                echo "    To remove configs of virtual host: $0 rmvh <web url>"
+                echo "        Example: $0 rmvh branch-name-v-azelin.conf"
+                echo "        The domain name will be also deleted"
+                echo 
+            ;;
+
+            rmall)
+                echo "    To remove anything: $0 rmall <relative path to the working copy>"
+                echo "        Example: $0 rmall liveteam_v.azelin"
+                echo "        BE CAREFULL!!! Apache config, DNS record, working copy and branch can be removed at all!"
+                echo 
+            ;;
+
+            all)
+                for h in $LIST; do
+                    manual "$h"
+                done
+            ;;
+
+            *)
+                echo "Wrong parameter"
+                echo "    To get help you should type: $0 help <`echo "$LIST all" | sed 's/ / | /g'`>"
+                echo
+            ;;
+
+        esac
+    else
+        echo "Empty help parameter"
+        echo "    To get help you should type: $0 help <`echo "$LIST all" | sed 's/ / | /g'`>"
+        echo
+    fi
+
+}
+
+
+
+if [ -n "$(whoami | egrep '^jailuser$')" ]; then
+        [ -d "$PREF" ] || mkdir -p "$PREF"
+        cd "$PREF"
+
+        case "$1" in
+            gb)
+                getbranch get "$2" "$3" "$4"
+            ;;
+            
+            nb)
+                getbranch new "$2" "$3" "$4"
+            ;;
+
+            ad)
+                [ -n "$2" ] && domman add $2 || manual ad
+            ;;
+
+            rd)
+                [ -n "$2" ] && domman rm $2 || manual rd
+            ;;
+
+            ld)                
+                ssh 192.168.3.254 -p 34444 sudo /opt/bin/dlist "$UNAME" && echo
+            ;;
+
+            rmvh)
+                rmvh "$2"
+            ;;
+
+            lvh)
+                lvh && echo
+            ;;
+            
+            rmall)
+                rmall "$2"
+            ;;
+
+            avh)
+                addvh "$2" "$3"
+            ;;
+
+
+            help)
+                manual "$2"
+            ;;
+
+            *)
+                manual
+            ;;
+
+        esac
+
+else
+    echo "You must be jailuser to run this"
+    echo
+    exit 2
+fi
+
+
+exit 0
+
