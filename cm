@@ -1,172 +1,357 @@
 #!/bin/sh
 
-PREF="/home/jailuser/www"
+#PREF="/home/jailuser/www"
+PREF="$HOME/www"
 
-UID=`cat /etc/passwd | awk -F ':' '$1~/^jailuser$/ { print $3 }'`
-GID=`cat /etc/passwd | awk -F ':' '$1~/^jailuser$/ { print $4 }'`
-UNAME=`hostname | sed 's/\.local//;s/_/\./g'`
-UNAMECH=`hostname | sed 's/\.local//;s/_/-/g'`
-SVN=`which svn`
-#LPREF=`dirname $0`
-LPREF='/sbin'
+#UID=`cat /etc/passwd | awk -F ':' '$1~/^jailuser$/ { print $3 }'`
+#GID=`cat /etc/passwd | awk -F ':' '$1~/^jailuser$/ { print $4 }'`
+UNAME=`hostname | sed 's/\.[a-z]*$//;s/_/\./g;s/-/\./g'`
+UNAMECH=`echo $UNAME | sed 's/\.local//;s/_/-/g;s/\./-/g'`
+GIT=`which git`
+GITU='git@172.16.1.123'
+IP=`ifconfig | grep -F "$IPPREF" | sed 's/^.*inet addr://;s/[^0-9.].*//' | grep -vF '127.0.0.1' | sed '/^$/d'`
+IPPREF='192.168.3.'
+#IPMSK=`echo "$IPPREF" | sed 's/\./\\\./g'`
+IPMSK=`echo "$IP" | sed 's/\./\\\./g'`
+LPREF=`dirname $0`
+#LPREF='/sbin'
+DNSKEY='/usr/local/sbin/user-updater.key'
+NGCONF="
+server
+{
+    listen 80;
+    server_name %%%VHOST%%%;
+    access_log /home/%%%UNAME%%%/www/log/%%%VDIR%%%-access.log;
+    error_log /home/%%%UNAME%%%/www/log/%%%VDIR%%%-error.log;
 
-ATPL="$(echo "$LPREF/apache.tpl")"
-APCONFPREF="/usr/local/etc/apache22/Includes"
+    allow 127.0.0.0/24;
+    allow 172.16.1.0/24;
+    allow 172.16.16.0/24;
+    allow 192.168.3.0/24;
+    deny all;
+  
+    root /home/%%%UNAME%%%/www/%%%VDIR%%%/htdocs;
+  
+    index index.php index.html index.htm;
+  
+    # use fastcgi for all php files
+    location ~ \.php$
+    {
+        fastcgi_pass unix:/var/run/php5-fpm.sock;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param       SCRIPT_FILENAME  \$document_root\$fastcgi_script_name;
+        fastcgi_ignore_client_abort     off;
+    }
+  
+    # Deny access to apache .htaccess files
+    location ~ /\.ht
+    {
+        deny all;
+    }
+}
+"
 
-SVNURL="svn://172.16.1.101/secure"
+APCONF="
+<VirtualHost *:80>
+    ServerAdmin admins@xsolla.com
+    DocumentRoot "/home/%%%UNAME%%%/www/%%%VDIR%%%/htdocs"
+    ServerName %%%VHOST%%%
+    ErrorLog "/home/%%%UNAME%%%/www/log/%%%VDIR%%%-error.log"
+</VirtualHost>
+"
 
-echo
+# Other service variables
 
-# Get/new Branch
-getbranch() {
-    if [ -n "$SVN" ]; then
-        if [ -n "$3" ]; then
+DIV='=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-='
+LOGLEVEL='debug'
+LPREF='date +%Y.%m.%d-%H:%M:%S'
+LCOLOR=1
 
-            if [ -n "$( echo "$3" | sed 's/[a-zA-Z0-9-]//g' )" ]; then
-                echo "The URL prefix must contain only this characters: a-z A-Z, digits and \"-\""
-                echo
-                exit 8
-            else
-
-                DPREF="$3"
-
-                if [ -n "$4" ]; then
-                    PASS="$4"
-                else
-                    OLDSTTY=$(stty -g)
-                    echo -n "Input your LDAP password: "
-                    stty -echo
-                    read PASS
-                    stty $OLDSTTY
-                    echo
+# Logging function
+l() {
+    [ -z "$LPREF" ] && LPREF='date +%Y.%m.%d-%H:%M:%S'
+    if [ -z "$LCOLOR" ]; then
+        [ -n "$(which tput)" ] && LCOLOR=1 || LCOLOR=0
+    fi
+    if [ -n "$2" ]; then
+        case "$1" in
+            d)
+                if [ "$LOGLEVEL" = "debug" ]; then
+                    [ "$LCOLOR" = "1" ] && tput setaf 5
+                    echo `$LPREF`" DEBUG:   $2"    
+                    [ "$LCOLOR" = "1" ] && tput sgr0
                 fi
-
-                case $1 in
-                    get)
-                        DNAME=`basename "$2"`
-                        SVNCOURL="$2"
-                    ;;
-                    new)
-                        DNAME="$2"
-                        echo "Trying to create new branch $SVNURL/branches/$DNAME"
-                        if $SVN cp "$SVNURL/trunk" "$SVNURL/branches/$DNAME" --username="$UNAME" --password="$PASS" --non-interactive -m "Create new branch $DNAME for $UNAME."; then
-                            SVNCOURL="$SVNURL/branches/$2"
-                        else
-                            echo
-                            echo "Can't make new branch. Something wrong happened. :("
-                            echo
-                            exit 9
-                        fi
-                    ;;
-                    *)
-                        echo "Wrong parameter $1"
-                        echo 
-                        exit 7
-                    ;;
-                esac
-            
-                echo "Trying to check out SVN data..."
-                if $SVN co "$SVNCOURL" --username="$UNAME" --password="$PASS" --non-interactive; then
-                    if [ -d "$PREF/$DNAME" ]; then
-                        #echo "Please, wait for changing grants"
-                        #chown -R "$UID:$GID" "$PREF/$DNAME"
-                        [ -n "$( echo "$5" | egrep '^noweb$' )" ] || addvh
-                    else
-                        echo "Can't find working directory $PREF/$DNAME"
-                        echo
-                        exit 5
-                    fi
-                else
-                    echo 
-                    echo "Can't make checkout. Something wrong happened. :("
-                    echo
-                    exit 8
+            ;;
+            i)
+                if [ "$LOGLEVEL" = "debug" ] || [ "$LOGLEVEL" = "info" ]; then
+                    [ "$LCOLOR" = "1" ] && tput setaf 2
+                    echo `$LPREF`" INFO:    $2"
+                    [ "$LCOLOR" = "1" ] && tput sgr0
                 fi
+            ;;
+            w)
+                if [ "$LOGLEVEL" = "debug" ] || [ "$LOGLEVEL" = "info" ] || [ "$LOGLEVEL" = "warning" ]; then
+                    [ "$LCOLOR" = "1" ] && tput setaf 3
+                    echo `$LPREF`" WARNING: $2"
+                    [ "$LCOLOR" = "1" ] && tput sgr0
+                fi
+            ;;
+            e)
+                [ "$LCOLOR" = "1" ] && tput setaf 1
+                echo `$LPREF`" ERROR:   $2"
+                [ "$LCOLOR" = "1" ] && tput sgr0
+            ;;
+            f)
+                [ "$LCOLOR" = "1" ] && tput setaf 1
+                echo `$LPREF`" FATAL:   $2"
+                [ "$LCOLOR" = "1" ] && tput sgr0
+            ;;
+            fe) 
+                [ "$LCOLOR" = "1" ] && tput setaf 1
+                echo `$LPREF`" FATAL:   $2"
+                [ "$LCOLOR" = "1" ] && tput setaf 2
+                echo `$LPREF`" INFO:    All next operations will be cancelled..."
+                [ "$LCOLOR" = "1" ] && tput sgr0
+                [ -n "$3" ] && exit $3 || exit 1 
+            ;;
+        esac
+    else
+        case "$1" in
+             fe) 
+                [ "$LCOLOR" = "1" ] && tput setaf 1
+                echo `$LPREF`" FATAL:   Not enough parameters." 
+                [ "$LCOLOR" = "1" ] && tput setaf 2
+                echo `$LPREF`" INFO:    All next operations will be cancelled..."
+                [ "$LCOLOR" = "1" ] && tput sgr0
+                exit 1 
+            ;;
+        esac
+    fi
+}
 
-            fi
+# Simple dialog
+dlg() {
+    ch="-"
+    [ -n "$2" ] && def="$2" || def='y'
+    while [ -z "$(echo "$ch" | sed 's/^$/'"$def"'/' | egrep -i '^[ynYN]?$' )" ]; do
+        case "$def" in
+            y|Y)
+                read -p "$1 [Y/n]: " ch
+            ;;
+            n|N)
+                read -p "$1 [N/y]: " ch
+            ;;
+        esac
+    done
+    [ -z "$ch" ] && ch="$def"
+    case "$ch" in
+        Y|y)
+            return 0
+        ;;
+        N|n)
+            return 1
+        ;;
+    esac
+}
 
-        else
-            echo "Not enough parameters to get or new brunch function"
-            echo 
-            exit 1
+# Get repository
+# 1 - git url, 2 - relative path in www dir
+getrep() {
+    if [ -n "$1" ]; then
+        cd $PREF
+        rep=`echo "$1" | sed 's/\.git$//'`
+        [ -n "$2" ] && repdir="$2" || repdir=`echo "$1" | sed 's#^.*/##g'`
+       echo $repdir 
+        if [ -n "$( echo "$repdir" | sed 's/[\./a-zA-Z0-9-]//g' )" ]; then
+            l fe "The URL prefix must contain only this characters: a-z A-Z, digits, dots and \"-\"" 2
         fi
 
+        if [ -d "$2" ]; then
+            l e "Directory $2 is already exists!"
+            l i "Repository $1 cant be cloned here..."
+            return 1
+        else
+            l i "Trying to clone repository $GITU:$rep.git to the $repdir..."
+            git clone "$GITU:$rep.git" "$repdir"
+            if [ -d "$repdir/.git" ]; then
+                l i "Repository was cloned successfully..."
+                return 0
+            else
+                l fe "Can\'t clone repository $rep..." 3
+            fi
+        fi
     else
-        echo "SVN client is not installed"
-        echo 
-        exit 4
+        l fe 'Failed to clone repository, not enough parameters...'
     fi
-
 }
 
 # Add/remove DNS record
+# domman <add|rm> <domain name without .user>
 domman() {
-    IP=`ifconfig alc0 | awk '$1~/^inet$/ { print $2 }'` 
-    ssh 192.168.3.254 -p 34444 sudo /opt/bin/domman $1 $2 "$IP"
+    if [ "$1" = "add" ]; then
+        if [ -n "$(nslookup  $2-$UNAMECH.user | sed '1,3d;/'"$IPMSK"'/!d;s/^.*: //' )" ]; then
+            l w "This domain name is already exists"
+            #if `dlg "Do you want to replace it?"`; then
+                #domman rm "$2-$UNAMECH"
+                #domman add "$2-$UNAMECH"
+            #fi
+            return 1
+        else
+            if `echo "server ns2.local|zone user|update add $2-$UNAMECH.user 600 A $IP|send" | tr '|' '\n' | nsupdate -k "$DNSKEY"`; then
+                l i "Domain name is added successfully"
+                return 0
+            else
+                l w "Can not add domain name"
+                return 1
+            fi
+            
+        fi
+    elif [ "$1" = "rm" ]; then
+        DNSIP=`nslookup $2-$UNAMECH.user | sed '/^$/d' | tail -n 1 | awk '$1~/^Address:$/ { print $2 }'`
+        if [ -n "$DNSIP" ]; then
+            if `echo "server ns2.local|zone user|update delete $2-$UNAMECH.user|send" | tr '|' '\n' | nsupdate -k "$DNSKEY"`; then
+                l i "Domain name is removed successfully"
+                return 0
+            else
+                l w "Can not remove domain name"
+            fi
+        else
+            l i "This domain name ($2-$UNAMECH.user) is not exists"
+        fi
+    #elif [ "$1" = "ls" ]; then
+        
+    fi
 }
 
 # Add virtual host
-addvh() {
+# 1 - webpref, 2 - relative path in www dir
+avh() {
+    [ -n "$1" ] || l fe
+    [ -n "$2" ] || l fe
+	cfggen() {
+		CFGPREF="/etc/$SRVTYPE/sites"    
+		VHNAME="$1-$UNAMECH.user"
+		CFGNAME="/etc/$SRVTYPE/sites-available/$VHNAME.conf"
+		SMLNAME="/etc/$SRVTYPE/sites-enabled/$VHNAME.conf"
+		LGDNAME="/home/$UNAME/www/$2/log"
+		ACLNAME="$LGDNAME/$SRVTYPE-access.log"
+		ERRNAME="$LGDNAME/$SRVTYPE-error.log"
+		case "$SRVTYPE" in 
+			"nginx")
+				CFGCONT=`echo "$NGCONF" | sed 's#%%%VHOST%%%#'"$VHNAME"'#g;s#%%%UNAME%%%#'"$UNAME"'#g;s#%%%VDIR%%%#'"$2"'#g'`
+			;;
+			"apache2")
+				CFGCONT=`echo "$APCONF" | sed 's#%%%VHOST%%%#'"$VHNAME"'#g;s#%%%UNAME%%%#'"$UNAME"'#g;s#%%%VDIR%%%#'"$2"'#g'`
+			;;
+		esac
+		l i "Adding virtual host for $VHNAME..."
+		cfgwrite() {
+			[ -f "$SMLNAME" ] && rm "$SMLNAME"
+			if `echo "$CFGCONT" > "$CFGNAME"`; then
+				l i "$SRVTYPE config for $VHNAME successfully saved."
+				ln -s "$CFGNAME" "$SMLNAME"
+				if `sudo $SRVTYPE -t`; then
+				echo $SRVTYPE OK
+				else
+					l fe $SRVTYPE config file syntax error! 9
+				fi
+			else
+				l fe "Fail to write config to $CFGCONT."
+			fi
+		}
+		[ -d "$LGDNAME" ] || mkdir -p "$LGDNAME"
+		touch "$ACLNAME"
+		touch "$ERRNAME"
 
-    APCONFPREF="/usr/local/etc/apache22/Includes"
+		if [ -f "$CFGNAME" ]; then
+			l w "Configuration file $CFGNAME is already exists."
+			if `dlg "Do you want to replace it?"`; then
+				[ -f "$SMLNAME" ] && rm "$SMLNAME"
+			cfgwrite
+			fi
+		else
+			cfgwrite
+		fi
+	}
+	SRVTYPE="apache2"
+	cfggen "$1" "$2"
 
-    [ -n "$1" ] && DNAME="$1"
-    [ -n "$2" ] && DPREF="$2"
-
-    if [ -d "$PREF/$DNAME" ]; then
-        #echo "Please, wait for changing grants"
-        #chown -R "$UID:$GID" "$PREF/$DNAME"
-        [ -d "$PREF/log" ] || mkdir -p "$PREF/log"
-
-        if [ -r "$ATPL" ]; then                        
-
-            ATPL="$(echo "$LPREF/apache.tpl")"
-
-            touch "$PREF/log/$DNAME_error.log"
-            #chown -R "$UID:$GID" "$PREF/log/$DNAME_error.log"
-            sed 's/###/'"$UNAME"'/g;s/\?\?\?/'"$DNAME"'/g;s/%%%/'"$DPREF"'/g;s/@@@/'"$UNAMECH"'/g' "$ATPL" > "$APCONFPREF/$DNAME.conf"
-            ar
-            domman add "$DPREF-$UNAMECH" "$IP"
-            echo "New domain is: $DPREF-$UNAMECH.user"
-
-        else
-            echo "Can't read apache template file $ATPL"
-            echo
-            exit 6
-        fi
-
-    else
-        echo "Can't find working directory $PREF/$DNAME"
-        echo
-        exit 5
-    fi
-
+	SRVTYPE="nginx"
+	cfggen "$1" "$2"
+	wr
 }
 
-# Remove virtual host
-rmvh() {
+# Add all
+# 1 - webpref, 2 - git url, 3 - relative path to the working copy
+add() {
+    [ -n "$1" ] || l fe "Web prefix should not be empty. See $0 help add for details."
+    [ -n "$2" ] || l fe "Git url should not be empty. See $0 help add for details."
+    #[ -n "$3" ] || l fe "Relative path to the working copy  should not be empty. See $0 help add for details."
+    [ -n "$3" ] && rel="$3" || rel="$1"
+    echo getrep "$2" "$3"
+    getrep "$2" "$rel"
+    if `dlg "Do you want to add virtual host?"`; then
+        avh "$1" "$rel"
+    fi
+}
+
+# Remove all
+# 1 - virtual host
+rmall() {
+    l i "Removing virtual host for $1..."
     if [ -n "$1" ]; then
-        LST=`grep -irn "ServerName" "$APCONFPREF" | awk '$3~/^'"$1"'$/ { print }'`
+        LST=`egrep "^[\t ]*server_name" /etc/nginx/sites-available/*.conf | sed 's/^[\t ]*server_name //;s/;.*$//'`
         if [ -n "$LST" ]; then
-            echo "$LST" | while read l; do
-                CONFNAME=`echo "$l" | cut -d ":" -f 1`
-                echo "Removing config file $CONFNAME"
-                if rm -v "$CONFNAME"; then
-                else
-                    echo "Can't remove file $CONFNAME"
-                    exit 11
+            for l in `echo $LST`; do
+#                CONFNAME=`echo "$l" | cut -d ":" -f 1`
+		CONFNAME="$(echo /etc/nginx/sites-available/"$l".conf)"
+                SLNNAME=`echo "$CONFNAME" | sed 's/sites-available/sites-enabled/g'`
+                DMNNAME=`echo "$1" | cut -d ":" -f 3`
+                WCPATH=`awk '$1~/^root$/ { gsub(/\/htdocs;/,""); gsub(/;/,""); print $2 }' $CONFNAME`
+				rmconf() {
+					if `dlg "Do you want to remove config file $CONFNAME?"`; then
+						if [ -f "$SLNNAME" ]; then
+							l i "Removing symlink file $SLNNAME"
+							if rm -v "$SLNNAME" ; then
+								echo > /dev/null
+							else
+								l fe "Can't remove file $SLNNAME" 11
+							fi
+						fi
+
+						l i "Removing config file $CONFNAME"
+						if rm -v "$CONFNAME"; then
+							echo > /dev/null
+						else
+							l fe "Can't remove file $CONFNAME" 11
+						fi
+					fi
+				}
+				rmconf
+				CONFNAME=`echo "$CONFNAME" | sed 's/nginx/apache2/g'`
+				SLNNAME=`echo "$SLNNAME" | sed 's/nginx/apache2/g'`
+				rmconf	
+
+                if `dlg "Do you want to remove domain name $DMNNAME?"`; then
+                    domman rm "$DMNNAME"
+                fi
+
+                if `dlg "Do you want to remove working copy $WCPATH?"`; then
+                    rm -rv "$WCPATH"
                 fi
             done
-            if [ -n "$2" ]; then
-                echo "Removing DNS record for $1"
-                domman rm "$1"
-                ar
-            fi
+
+            #if [ -n "$2" ]; then
+                #echo "Removing DNS record for $1"
+                #domman rm "$1"
+                #ar
+            #fi
         fi
     else
-        echo "Not enough parameters"
-        echo "Usage: $0 rmvh <hostname>"
-        echo "Example: $0 rmvh test-domain-v-azelin.user"
+        l f "Not enough parameters"
+        echo "Usage: $0 rmall <hostname>"
+        echo "Example: $0 rmall test-domain-v-azelin.user"
         echo
         exit 1
     fi
@@ -174,171 +359,61 @@ rmvh() {
 
 # List of virtual hosts
 lvh() {
-    [ -n "$1" ] && grep -irn 'ServerName' "$APCONFPREF"/* | sed 's/:[0-9]*://g;s/ServerName//g' || grep -irn 'ServerName' "$APCONFPREF"/* | sed 's/:[0-9]*://g;s/ServerName//g' | awk '{ print $2 }'
+    grep -irn 'server_name' /etc/nginx/sites-enabled/*.conf | awk '{gsub(/;/, "", $3); print $3}'
 }
 
-# Apache restart
-ar() {
-    sudo /usr/local/etc/rc.d/apache22 restart
-}
-
-# Remove all
-rmall() {
-    if [ -n "$1" ]; then
-
-        # Removing of svn path
-        if [ -d "$PREF/$1" ]; then
-            cd "$PREF/$1"
-            if svn info > /dev/null; then
-                SVNURL=`svn info | awk '$1~/^URL:$/ { print $2 }'`
-                ch=""
-                while [ -z "$(echo "$ch" | egrep '^[yn]$' )" ]; do
-                    echo -n "WARNING!!! Do you really want to remove $SVNURL from svn repository? [y/n] "
-                    read ch
-                done
-                if [ "$ch" == "y" ]; then
-                    OLDSTTY=$(stty -g)
-                    echo -n "Input your LDAP password: "
-                    stty -echo
-                    read PASS
-                    stty $OLDSTTY
-                    echo
-                    echo "Trying to remove $SVNURL from svn repository..."
-                    if svn rm "$SVNURL" -m "Removing $SVNURL from repository" --username="$UNAME" --password="$PASS" --non-interactive; then
-                        echo > /dev/null
-                    else
-                        echo "Can't remove $SVNURL from repository"
-                        echo
-                        exit 13
-                    fi
-                fi
-            echo
-            cd "$PREF"
-            else
-                echo "Can't execute svn info in working copy $PREF/$1"
-                echo
-                exit 12 
-            fi 
-        else
-            echo "Can't find working directory $PREF/$1"
-            echo
-        fi
-
-        # Removing of apache configs
-        CFGLIST=`grep -irn "$PREF/$1/htdocs" "$APCONFPREF" | cut -d ":" -f 1 | sort -u`
-        if [ -n "$CFGLIST" ]; then
-            echo
-            echo "Found apache configuration files for path $1:"
-            echo "$CFGLIST"
-            echo
-            ch=""
-            DLIST=""
-            for cfg in $CFGLIST; do
-                DLIST="$(echo "$DLIST"'|'"$(awk '$1~/^ServerName$/ { print $2 }' "$cfg" | sed 's/\.user$//')")"
-                while [ -z "$(echo "$ch" | egrep '^[yn]$' )" ]; do
-                    echo -n "Do you want to remove config file $cfg? [y/n] "
-                    read ch
-                done
-                if [ "$ch" == "y" ]; then
-                    echo 
-                    rm -fv "$cfg"
-                    echo Restarting apache...
-                    ar
-                fi
-                ch=""
-                echo
-            done
-            DLIST=`echo "$DLIST" | sed 's/^|//'`
-        fi
-
-        # Removing of working directory
-        if [ -d "$PREF/$1" ]; then
-            ch=""
-            while [ -z "$(echo "$ch" | egrep '^[yn]$' )" ]; do
-                echo -n "Do you really want to remove $PREF/$1 working directory? [y/n] "
-                read ch
-            done
-            if [ "$ch" == "y" ]; then
-                echo
-                rm -rfv "$PREF/$1"
-                echo
-            fi
-        
-        fi
-
-        # Removing of DNS records
-        if [ -n "$DLIST" ]; then
-            echo 
-            IP=`ifconfig alc0 | awk '$1~/^inet$/ { print $2 }'` 
-            DLIST=`ssh 192.168.3.254 -p 34444 sudo /opt/bin/dlist "$UNAME" | awk '$1~/'"$DLIST"'/ && $2~/'"$IP"'/' | sort -u | tail -n 1`
-            if [ -n "$DLIST" ]; then
-                echo "Found DNS record: $DLIST"
-            fi
-            ch=""
-            while [ -z "$(echo "$ch" | egrep '^[yn]$' )" ]; do
-                echo -n "Do you want to remove it? [y/n] "
-                read ch
-            done
-            if [ "$ch" == "y" ]; then
-                echo
-                domman rm `echo "$DLIST" | awk '{ print $1 }'`
-                echo
-            else
-                echo
-            fi
-
-        fi
-
-    else
-        echo "Not enough parameters"
-        manual rmall
-        exit 1
-    fi
+# Apache and Nginx restart
+wr() {
+    sudo /etc/init.d/apache2 restart
+    sudo /etc/init.d/nginx restart
 }
 
 # Manual
 manual() {
-    LIST="gb nb ad rd ld rmvh lvh rmall"
+    LIST="gr ad rd add rmall avh lvh"
 
     if [ -n "$1" ]; then
         case "$1" in
-            gb)
+             gr)
                 echo "Usage:"
-                echo "    To get existing branch: $0 gb <branch url> <web url prefix>"
-                echo "        Example: $0 gb svn://172.16.1.101/secure/branches/liveteam_v.azelin liveteam"
-                echo "        Result domain name: http://liveteam-v-azelin.user"
-                echo "        Configuration file for apache and DNS record will be created after svn checkout"
+                echo "    To get existing repository: $0 gr <repository path without .git and servername> <web url prefix>"
+                echo "        Example: $0 gb frontend/secure-xsolla-com secure"
+                echo "        Result domain name: http://secure-v-azelin.user"
+                echo "        Configuration file for nginx and DNS record will be created after cloning"
                 echo 
             ;;
             
-            nb)
-                echo "    To create new branch: $0 nb <branch name> <web url prefix>"
-                echo "        Example: $0 nb liveteam_v.azelin liveteam"
-                echo "        Result domain name: http://liveteam-v-azelin.user"
-                echo "        Configuration file for apache and DNS record will be created after svn copy and checkout"
-                echo 
-            ;;
 
             ad)
                 echo "    To add domain record: $0 ad <domain name without .user>"
-                echo "        Example: $0 ad liveteam_v.azelin"
-                echo "        The domain name will be linked to IP address of this jail"
+                echo "        Example: $0 ad liveteam"
+                echo "        The domain livesteam-a-azelin.user will be linked to IP address of this jail"
                 echo 
             ;;
 
             rd)
                 echo "    To remove domain record: $0 rd <domain name without .user>"
                 echo "        Example: $0 rd liveteam_v.azelin"
-                echo "        The domain name will be linked to IP address of this jail"
+                echo "        The domain name will be removed"
                 echo 
             ;;
 
-            ld)
-                echo "    To getting list of domain name of this user: $0 ld"
-                echo "        Example: $0 ld"
-                echo "        You will get list of domains that ends with \"-v-azelin.user\" if your username is v.azelin"
+            add)
+                echo "    To checkout rep, create configs and update dns records: $0 add <webprefix> <git repository url without .git and servername> <path to the working copy>"
+                echo "        Example: $0 add secure \"frontend/seucre\" secure.xsolla.com"
+                echo "        You will get the code from repository, then nginx config and dns record will be created"
                 echo 
+
             ;;
+           
+            avh)
+                echo "    To add new virtual hosts: $0 avh <webprefix> <relavive path in www dir>"
+                echo "        Example: $0 lvh"
+                echo "        You will get list of your virtual hosts"
+                echo 
+
+            ;;
+
 
             lvh)
                 echo "    To getting list of your virtual hosts: $0 lvh"
@@ -348,17 +423,10 @@ manual() {
 
             ;;
 
-            rmvh)
-                echo "    To remove configs of virtual host: $0 rmvh <web url>"
-                echo "        Example: $0 rmvh branch-name-v-azelin.conf"
-                echo "        The domain name will be also deleted"
-                echo 
-            ;;
-
             rmall)
-                echo "    To remove anything: $0 rmall <relative path to the working copy>"
-                echo "        Example: $0 rmall liveteam_v.azelin"
-                echo "        BE CAREFULL!!! Apache config, DNS record, working copy and branch can be removed at all!"
+                echo "    To remove anything: $0 rmall <name of virtual host>"
+                echo "        Example: $0 rmall secure-v-azelin.user"
+                echo "        BE CAREFULL!!! Nginx config, DNS record, and working copy can be removed at all!"
                 echo 
             ;;
 
@@ -383,35 +451,34 @@ manual() {
 
 }
 
+# Check other requirements
+chk() {
+    [ `whoami` = "root" ] && l fe 'Do not start it if you are root!'
+    if ! [ -d "$PREF" ]; then
+        mkdir -p /home/$UNAME/www
+        chown "$UNAME:www-data" /home/$UNAME/www
+    fi
+    [ -n "$(dpkg -l | awk '$2~/^git$/')" ] || l fe "Git is not installed!"
+}
 
 
-if [ -n "$(whoami | egrep '^jailuser$')" ]; then
+chk
+
+#if [ -n "$(whoami | egrep '^jailuser$')" ]; then
         [ -d "$PREF" ] || mkdir -p "$PREF"
         cd "$PREF"
 
         case "$1" in
-            gb)
-                getbranch get "$2" "$3" "$4"
+            gr)
+                gr "$2" "$3"
             ;;
             
-            nb)
-                getbranch new "$2" "$3" "$4"
-            ;;
-
             ad)
                 [ -n "$2" ] && domman add $2 || manual ad
             ;;
 
             rd)
                 [ -n "$2" ] && domman rm $2 || manual rd
-            ;;
-
-            ld)                
-                ssh 192.168.3.254 -p 34444 sudo /opt/bin/dlist "$UNAME" && echo
-            ;;
-
-            rmvh)
-                rmvh "$2"
             ;;
 
             lvh)
@@ -423,9 +490,12 @@ if [ -n "$(whoami | egrep '^jailuser$')" ]; then
             ;;
 
             avh)
-                addvh "$2" "$3"
+                avh "$2" "$3"
             ;;
 
+            add)
+                add "$2" "$3" "$4" 
+            ;;
 
             help)
                 manual "$2"
@@ -437,12 +507,5 @@ if [ -n "$(whoami | egrep '^jailuser$')" ]; then
 
         esac
 
-else
-    echo "You must be jailuser to run this"
-    echo
-    exit 2
-fi
-
 
 exit 0
-
