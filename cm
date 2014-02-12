@@ -397,7 +397,7 @@ switch() {
 
 # Manual
 manual() {
-    LIST="gr ad rd add rmall avh lvh"
+    LIST="gr ad rd add rmall avh lvh switch"
 
     if [ -n "$1" ]; then
         case "$1" in
@@ -454,6 +454,13 @@ manual() {
                 echo "    To remove anything: $0 rmall <name of virtual host>"
                 echo "        Example: $0 rmall secure-v-azelin.user"
                 echo "        BE CAREFULL!!! Nginx config, DNS record, and working copy can be removed at all!"
+                echo 
+            ;;
+
+            switch)
+                echo "    To switch webserver: $0 switch <webserver name>"
+                echo "        Example: $0 switch Apache2"
+                echo "        apache2 / nginx
                 echo 
             ;;
 
@@ -546,4 +553,3 @@ chk
 
 
 exit 0
-
