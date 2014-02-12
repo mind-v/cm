@@ -368,6 +368,33 @@ wr() {
     sudo /etc/init.d/nginx restart
 }
 
+switch() {
+	if [ -n "$1" ]; then	
+	case "$1" in
+			apache2)
+			pgrep nginx && sudo service nginx stop
+			sudo update-rc.d -f nginx remove
+			sudo update-rc.d apache2 defaults
+			sudo service apache2 start && pgrep apache2 && echo Apache2 is serving you now.
+			;;
+
+			nginx)
+			pgrep apache2 && sudo service apache2 stop
+			sudo update-rc.d -f apache2 remove
+			sudo update-rc.d nginx defaults
+			sudo service nginx start && pgrep nginx && echo Nginx is serving you now.
+			;;
+
+			*)
+				echo "Example: cm switch apache2"
+			;;
+
+		esac
+	else
+		echo "Example: cm switch apache2"
+	fi
+}
+
 # Manual
 manual() {
     LIST="gr ad rd add rmall avh lvh"
@@ -497,6 +524,10 @@ chk
                 add "$2" "$3" "$4" 
             ;;
 
+            switch)
+                switch "$2"
+            ;;
+
             help)
                 manual "$2"
             ;;
@@ -507,5 +538,12 @@ chk
 
         esac
 
+#else
+    #echo "You must be jailuser to run this"
+    #echo
+    #exit 2
+#fi
+
 
 exit 0
+
