@@ -20,7 +20,6 @@ if(defined($_POST['dbonly']))
 if (isset($_POST['args'])) {
  $args = escapeshellcmd ($_POST['args']);
  $cmd_to_exec = $cmd.' '.$args;
-  var_dump ($dbonly);
  exec("$cmd_to_exec 2>&1", $out);
    foreach($out as $line) {
 		echo $line."<br>";
