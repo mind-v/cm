@@ -1,0 +1,6 @@
+#! /bin/bash
+if [ -z "$*" ] ; then echo "Empty request"
+else
+mysqldump -hHOST -uUSER -pPASSWORD --compress --single-transaction --quick --opt $* --where="1 order by 1 desc limit 10000" > "/mnt/share/dump/$$-$*.sql" && echo "Dumped to /mnt/share/dump/$$-$*.sql on " `date` || rm "/mnt/share/dump/$$-$*.sql"
+fi
+
