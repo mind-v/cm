@@ -12,16 +12,18 @@
 </form>
 <h2>
 <?php
-$cmd = '/usr/bin/db-ondemand';
-if(defined($_POST['dbonly']))
-{
 
+if(isset($_POST['dbonly'])) {
+	$cmd = '/usr/bin/db-ondemand dbonly';
+} else {
+	$cmd = '/usr/bin/db-ondemand';
 }
+
 if (isset($_POST['args'])) {
- $args = escapeshellcmd ($_POST['args']);
- $cmd_to_exec = $cmd.' '.$args;
- exec("$cmd_to_exec 2>&1", $out);
-   foreach($out as $line) {
+ 	$args = escapeshellcmd ($_POST['args']);
+ 	$cmd_to_exec = $cmd.' '.$args;
+	exec("$cmd_to_exec 2>&1", $out);
+	foreach($out as $line) {
 		echo $line."<br>";
 	} 
 }
