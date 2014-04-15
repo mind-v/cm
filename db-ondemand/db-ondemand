@@ -7,8 +7,12 @@ else
 			params=`echo $* | cut -d " " -f 2-`
 			mysqldump -hHOST -uUSER -pPASSWORD --compress --single-transaction --quick --opt --databases $params > "/mnt/share/dump/$$-$params.sql" && echo "Dumped to /mnt/share/dump/$$-$params.sql on " `date` || rm "/mnt/share/dump/$$-$params.sql"
 		;;
+		nolimit)
+			params=`echo $* | cut -d " " -f 2-`
+			mysqldump -hHOST -uUSER -pPASSWORD --compress --single-transaction --quick --opt $params > "/mnt/share/dump/$$-$params.sql" && echo "Dumped to /mnt/share/dump/$$-$params.sql on " `date` || rm "/mnt/share/dump/$$-$params.sql"
+		;;
 		*)
-			mysqldump -hHOST -uUSER -pPASSWORD --compress --single-transaction --quick --opt $* > "/mnt/share/dump/$$-$*.sql" && echo "Dumped to /mnt/share/dump/$$-$*.sql on " `date` || rm "/mnt/share/dump/$$-$*.sql"
+			mysqldump -hHOST -uUSER -pPASSWORD --compress --single-transaction --quick --opt --where="1 order by 1 desc limit 10000" $* > "/mnt/share/dump/$$-$*.sql" && echo "Dumped to /mnt/share/dump/$$-$*.sql on " `date` || rm "/mnt/share/dump/$$-$*.sql"
 		;;
 	esac
 fi
