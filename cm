@@ -9,7 +9,7 @@ UNAME=`hostname | sed 's/\.[a-z]*$//;s/_/\./g;s/-/\./g'`
 UNAMECH=`echo $UNAME | sed 's/\.local//;s/_/-/g;s/\./-/g'`
 GIT=`which git`
 GITU='git@172.16.1.123'
-IP=`ifconfig | grep -F "$IPPREF" | sed 's/^.*inet addr://;s/[^0-9.].*//' | grep -vF '127.0.0.1' | sed '/^$/d'`
+IP=`/sbin/ifconfig | grep -F "$IPPREF" | sed 's/^.*inet addr://;s/[^0-9.].*//' | grep -vF '127.0.0.1' | sed '/^$/d'`
 IPPREF='192.168.3.'
 #IPMSK=`echo "$IPPREF" | sed 's/\./\\\./g'`
 IPMSK=`echo "$IP" | sed 's/\./\\\./g'`
@@ -224,6 +224,29 @@ domman() {
     fi
 }
 
+
+# Add wildcard domain
+wilddom() {
+    if [ -n "$(nslookup  *.$UNAMECH.user | sed '1,3d;/'"$IPMSK"'/!d;s/^.*: //' )" ]; then
+        l w "This domain name is already exists... Replacing..."
+        if `echo "server ns2.local|zone user|update delete *.$UNAMECH.user|update add *.$UNAMECH.user 600 A $IP|send" | tr '|' '\n' | nsupdate -k "$DNSKEY"`; then
+            l i "Wildcard domain name is replaced successfully"
+            return 0
+        else
+            l w "Can not remove wildcard domain name"
+        fi
+    else
+        if `echo "server ns2.local|zone user|update add *.$UNAMECH.user 600 A $IP|send" | tr '|' '\n' | nsupdate -k "$DNSKEY"`; then
+            l i "Wildcard domain name is added successfully"
+            return 0
+        else
+            l w "Can not add wildcard domain name"
+            return 1
+        fi
+    fi
+}
+
+
 # Add virtual host
 # 1 - webpref, 2 - relative path in www dir
 avh() {
@@ -294,6 +317,9 @@ add() {
     if `dlg "Do you want to add virtual host?"`; then
         avh "$1" "$rel"
     fi
+    if `dlg "Do you want to add domain for this virtual host?"`; then
+        domman add "$1"
+    fi       
 }
 
 # Remove all
@@ -302,10 +328,11 @@ rmall() {
     l i "Removing virtual host for $1..."
     if [ -n "$1" ]; then
         LST=`egrep "^[\t ]*server_name" /etc/nginx/sites-available/*.conf | sed 's/^[\t ]*server_name //;s/;.*$//'`
+        LST=`ls -1 /etc/nginx/sites-available/"$1".conf`
         if [ -n "$LST" ]; then
             for l in `echo $LST`; do
 #                CONFNAME=`echo "$l" | cut -d ":" -f 1`
-		CONFNAME="$(echo /etc/nginx/sites-available/"$l".conf)"
+		        CONFNAME="$l"
                 SLNNAME=`echo "$CONFNAME" | sed 's/sites-available/sites-enabled/g'`
                 DMNNAME=`echo "$1" | cut -d ":" -f 3`
                 WCPATH=`awk '$1~/^root$/ { gsub(/\/htdocs;/,""); gsub(/;/,""); print $2 }' $CONFNAME`
@@ -404,9 +431,8 @@ manual() {
              gr)
                 echo "Usage:"
                 echo "    To get existing repository: $0 gr <repository path without .git and servername> <web url prefix>"
-                echo "        Example: $0 gb frontend/secure-xsolla-com secure"
-                echo "        Result domain name: http://secure-v-azelin.user"
-                echo "        Configuration file for nginx and DNS record will be created after cloning"
+                echo "        Example: $0 gr backend/libs libs"
+                echo "        Configuration file for nginx/apache2 and DNS record will not be created after cloning"
                 echo 
             ;;
             
@@ -425,9 +451,15 @@ manual() {
                 echo 
             ;;
 
+            wd)
+                echo "    To set wildcard domain record to current host: $0 wd"
+                echo "        Example: $0 wd"
+                echo 
+            ;;
+
             add)
                 echo "    To checkout rep, create configs and update dns records: $0 add <webprefix> <git repository url without .git and servername> <path to the working copy>"
-                echo "        Example: $0 add secure \"frontend/seucre\" secure.xsolla.com"
+                echo "        Example: $0 add secure \"frontend/secure-xsolla-com\" secure.xsolla.com"
                 echo "        You will get the code from repository, then nginx config and dns record will be created"
                 echo 
 
@@ -435,8 +467,9 @@ manual() {
            
             avh)
                 echo "    To add new virtual hosts: $0 avh <webprefix> <relavive path in www dir>"
-                echo "        Example: $0 lvh"
-                echo "        You will get list of your virtual hosts"
+                echo "        Example: $0 avh test1 secure.xsolla.com"
+                echo "        It will makes virtual host test1-v.azelin.user that will be linked to the"
+                echo "        /home/v.azelin/www/secure.xsolla.com"
                 echo 
 
             ;;
@@ -460,7 +493,7 @@ manual() {
             switch)
                 echo "    To switch webserver: $0 switch <webserver name>"
                 echo "        Example: $0 switch Apache2"
-                echo "        apache2 / nginx
+                echo "        apache2 / nginx"
                 echo 
             ;;
 
@@ -504,7 +537,7 @@ chk
 
         case "$1" in
             gr)
-                gr "$2" "$3"
+                getrep "$2" "$3"
             ;;
             
             ad)
@@ -513,6 +546,10 @@ chk
 
             rd)
                 [ -n "$2" ] && domman rm $2 || manual rd
+            ;;
+
+            wd)
+                wilddom
             ;;
 
             lvh)
@@ -553,3 +590,4 @@ chk
 
 
 exit 0
+
