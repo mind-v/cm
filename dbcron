@@ -1,0 +1,49 @@
+#! /bin/bash
+SHELL=/bin/bash
+rm /root/screenlog.*
+[ -n "$(/sbin/ifconfig eth0 | grep -F 'inet addr:192.168.100.100')" ] || exit 0
+
+echo "Start time:"
+date
+echo "Start time:"                      >> /mnt/share/dumplog
+date                                    >> /mnt/share/dumplog
+ls -lah /mnt/share/dump/ | grep dbcron  >> /mnt/share/dumplog
+
+ALLDB=`mysql -hHOST -uUSER -pPASSWORD -N -B -e 'show databases;' | egrep -v '(information_schema|mysql|performance_schema|test|demo|system_events)' | tr '\n' ' '`
+
+echo "dumping all MySQL databases, last 10000 lines (except mysql-related)"
+mysqldump -hHOST -uUSER -pPASSWORD --compress --single-transaction --quick --opt --skip-triggers --databases $ALLDB --where="1 order by 1 desc limit 10000" > /mnt/share/dump/dbcron-all-10000.sql
+
+date
+echo dumping full MySQL databases: dbname
+parallel echo `mysqldump -hHOST -uUSER -pPASSWORD --compress --single-transaction --quick --opt --skip-triggers --databases dbname > /mnt/share/dump/dbcron-dbname.sql` `mysql -uroot -pPASSWOrd -f < /mnt/share/dump/dbcron-all-10000.sql`
+
+date
+echo dumping specific tables
+parallel echo `mysqldump -hHOST -uUSER -pPASSWORD --compress --single-transaction --quick --opt --skip-triggers dbname tablename > /mnt/share/dump/dbcron-dbname_tables.sql` `mysql -uroot -pPASSWOrd -f < /mnt/share/dump/dbcron-dbname.sql`
+
+date
+echo dumping full MySQL databases: dbname
+parallel echo `mysqldump -hHOST -uUSER -pPASSWORD --compress --single-transaction --quick --opt --skip-triggers --databases dbname > /mnt/share/dump/dbcron-dbname.sql` `mysql -uroot -pPASSWOrd -f dvapay < /mnt/share/dump/dbcron-dbname_tables.sql`
+
+date
+echo import dbname
+mysql -uroot -pPASSWOrd -f binbase < /mnt/share/dump/dbcron-dbname.sql
+
+date
+echo import dbname
+mysqldump -hHOST -uUSER -pPASSWORD --compress --single-transaction --quick --opt --skip-triggers dbname tablename > /mnt/share/dump/dbcron-dbname.sql
+
+date
+echo import
+mysql -uroot -pPASSWOrd -f dbname < /mnt/share/dump/dbcron-dbname.sql
+mysql -uroot -pPASSWOrd -f dbname < /mnt/share/dump/dbcron-dbname.sql
+
+date
+echo "End time:"
+date
+echo "End time:"                        >> /mnt/share/dumplog
+ls -lah /mnt/share/dump/ | grep dbcron  >> /mnt/share/dumplog
+echo -e "\n\n"                          >> /mnt/share/dumplog
+echo -e "\n\n"
+if [ -f /root/screenlog.0 ]; then `cat /root/screenlog.0 | mail -s 'Nighttime dump log' admins@example.com`; else echo ; fi
